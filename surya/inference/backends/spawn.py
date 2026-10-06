@@ -5,6 +5,7 @@ spawn detached, write sentinel, register atexit kill (only the spawner cleans up
 """
 
 from __future__ import annotations
+import shutil
 
 import atexit
 import json
@@ -142,8 +143,9 @@ def _capture_server_logs(handle: "SpawnHandle", backend: str, tail: int = 100) -
     """Best-effort tail of a server's logs, for surfacing startup failures."""
     try:
         if handle.cleanup_kind == "docker":
+            docker_or_podman = _resolve_docker_or_podman_binary()
             r = subprocess.run(
-                ["docker", "logs", "--tail", str(tail), handle.cleanup_id],
+                [docker_or_podman, "logs", "--tail", str(tail), handle.cleanup_id],
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -160,11 +162,24 @@ def _capture_server_logs(handle: "SpawnHandle", backend: str, tail: int = 100) -
     return "(no logs available)"
     return "(no logs available)"
 
+def _resolve_docker_or_podman_binary() -> str:
+    found = shutil.which("docker")
+    if found:
+        return found
+    found = shutil.which("podman")
+    if found:
+        logger.warning("Using podman='%s'", found)
+        return found
+    raise SpawnError(
+        "docker or podman binary not found. Install Docker (https://docs.docker.com/get-docker/) "
+        "and ensure the daemon is running."
+    )
 
 def _stop_docker_container(name: str) -> None:
+    docker_or_podman = _resolve_docker_or_podman_binary()
     try:
         subprocess.run(
-            ["docker", "stop", name], check=False, capture_output=True, timeout=30
+            [docker_or_podman, "stop", name], check=False, capture_output=True, timeout=30
         )
         logger.info(f"Stopped docker container {name}")
     except Exception as e:

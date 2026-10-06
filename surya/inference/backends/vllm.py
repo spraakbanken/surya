@@ -60,12 +60,16 @@ def _gpu_settings(gpu: str) -> tuple[int, int]:
     return max_batched_tokens, max_num_seqs
 
 
-def _resolve_docker_binary() -> str:
+def _resolve_docker_or_podman_binary() -> str:
     found = shutil.which("docker")
     if found:
         return found
+    found = shutil.which("podman")
+    if found:
+        logger.warning("Using podman='%s'", found)
+        return found
     raise SpawnError(
-        "docker binary not found. Install Docker (https://docs.docker.com/get-docker/) "
+        "docker or podman binary not found. Install Docker (https://docs.docker.com/get-docker/) "
         "and ensure the daemon is running."
     )
 
@@ -136,7 +140,7 @@ class VllmBackend(Backend):
             )
             return self.handle
 
-        docker = _resolve_docker_binary()
+        docker_or_podman = _resolve_docker_or_podman_binary()
         max_batched_tokens, max_num_seqs = _gpu_settings(settings.VLLM_GPU_TYPE)
         self._max_num_seqs = max_num_seqs
 
@@ -144,16 +148,12 @@ class VllmBackend(Backend):
             container_name = f"surya-vllm-{port}"
             hf_cache = os.path.expanduser(settings.DOCKER_HF_CACHE_PATH)
             cmd = [
-                docker,
+                docker_or_podman,
                 "run",
                 "--rm",
                 "-d",
                 "--name",
                 container_name,
-                "--runtime",
-                "nvidia",
-                "--gpus",
-                f"device={settings.VLLM_GPUS}",
                 "-v",
                 f"{hf_cache}:/root/.cache/huggingface",
                 "-p",
@@ -179,6 +179,16 @@ class VllmBackend(Backend):
                 "--served-model-name",
                 settings.SURYA_MODEL_CHECKPOINT,
             ]
+            if "docker" in docker_or_podman:
+                cmd.extend([
+                    "--runtime",
+                    "nvidia",
+                    "--gpus",
+                    f"device={settings.VLLM_GPUS}",
+
+                ])
+            elif "podman" in docker_or_podman:
+                cmd.extend(["--device", f"nvidia.com/gpu={settings.VLLM_GPUS}"])
             if settings.VLLM_ENABLE_MTP:
                 spec_config = json.dumps(
                     {
